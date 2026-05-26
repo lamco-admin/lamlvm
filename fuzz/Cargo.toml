@@ -1,0 +1,55 @@
+[package]
+name = "lamlvm-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+authors = [
+    "Greg Lamberson <greg@lamco.io>",
+    "Lamco Development <office@lamco.io>",
+]
+license = "MIT"
+
+# Standalone workspace so cargo-fuzz's nightly + libfuzzer-sys do not
+# contaminate the main lamlvm package's stable build. Mirrors the same
+# arrangement used in lambutter-dev/fuzz.
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+lamlvm = { path = "..", default-features = false, features = ["std", "__fuzzing"] }
+embedded-io = { version = "0.6", features = ["std"] }
+embedded-io-adapters = { version = "0.6", features = ["std"] }
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+
+[[bin]]
+name = "fuzz_lvm2_open"
+path = "fuzz_targets/fuzz_lvm2_open.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_pv_label"
+path = "fuzz_targets/fuzz_pv_label.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_pv_header"
+path = "fuzz_targets/fuzz_pv_header.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_metadata_area_header"
+path = "fuzz_targets/fuzz_metadata_area_header.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_vg_metadata_text"
+path = "fuzz_targets/fuzz_vg_metadata_text.rs"
+test = false
+doc = false

@@ -43,9 +43,15 @@ std = [
     "snafu/std",
     "tracing/std",
 ]
+# Re-exports internal parser entry points for the fuzz harness. NOT
+# stable API; do not enable in production consumers.
+__fuzzing = []
 
 [dev-dependencies]
 # For the integration test that mounts ext4 on top of an LV. std-only.
 ext4 = "0.9"
 positioned-io = "0.2"
 tracing-subscriber = "0.3"
+# Bridges std::io::{Read,Seek} into embedded_io::{Read,Seek} for the
+# tests that read from real files / Cursors.
+embedded-io-adapters = { version = "0.6", features = ["std"] }

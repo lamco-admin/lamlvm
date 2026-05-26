@@ -17,11 +17,14 @@ use std::env;
 use std::fs::File;
 
 use embedded_io::{Read, Seek, SeekFrom};
+use embedded_io_adapters::std::FromStd;
 use ext4::Options;
 use lamlvm::Lvm2;
 use positioned_io::ReadAt;
 use snafu::ResultExt;
 use tracing::Level;
+
+type EioFile = FromStd<File>;
 
 fn main() -> Result<(), snafu::Whatever> {
     tracing_subscriber::fmt().with_max_level(Level::INFO).init();
@@ -36,12 +39,13 @@ fn main() -> Result<(), snafu::Whatever> {
         .ok_or("usage: walk_ext4_on_lv <pv_path> <lv_name>")
         .whatever_context("missing lv_name arg")?;
 
-    let mut f = File::open(&pv_path).whatever_context("opening PV")?;
-    let lvm = Lvm2::open(&mut f).whatever_context("parsing PV")?;
+    let mut f1: EioFile = FromStd::new(File::open(&pv_path).whatever_context("opening PV")?);
+    let lvm = Lvm2::open(&mut f1).whatever_context("parsing PV")?;
     tracing::info!(vg = lvm.vg_name(), pv = lvm.pv_name(), "opened LVM");
 
+    let f2: EioFile = FromStd::new(File::open(&pv_path).whatever_context("re-opening PV")?);
     let olv = lvm
-        .open_lv_by_name(&lv_name, &mut f)
+        .open_lv_by_name(&lv_name, f2)
         .ok_or_else(|| format!("no LV named {lv_name:?} in VG {}", lvm.vg_name()))
         .whatever_context("looking up LV")?;
 

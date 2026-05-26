@@ -5,49 +5,48 @@
 //! The test image `image.raw` is gitignored. Build a fresh one with:
 //!
 //! ```sh
-//! dd if=/dev/zero of=image.raw bs=1M count=64
-//! losetup --find --show image.raw                              # → /dev/loopN
-//! pvcreate /dev/loopN
-//! vgcreate testvg /dev/loopN
-//! lvcreate -L 16M -n testlv testvg
-//! mkfs.ext4 /dev/testvg/testlv
-//! mount /dev/testvg/testlv /mnt
-//! echo foo > /mnt/testfile1 ; echo bar > /mnt/testfile2
-//! umount /mnt
-//! lvchange -an testvg ; vgchange -an testvg
-//! losetup -d /dev/loopN
+//! sudo tests/build-fixture.sh
 //! ```
 
 use std::cell::RefCell;
 use std::fs::File;
+use std::io::Read as _;
 
 use embedded_io::{Read, Seek, SeekFrom};
+use embedded_io_adapters::std::FromStd;
 use ext4::Options;
 use lamlvm::Lvm2;
 use positioned_io::ReadAt;
 use snafu::ResultExt;
 use tracing::Level;
 
+type EioFile = FromStd<File>;
+
 #[test]
 fn ext4_on_linear_lv() -> Result<(), snafu::Whatever> {
-    tracing_subscriber::fmt().with_max_level(Level::TRACE).init();
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(Level::TRACE)
+        .try_init();
 
-    // Use the image fixture if present; skip with a helpful message otherwise
-    // so `cargo test` works out-of-the-box for crate consumers.
     let path = "image.raw";
     if !std::path::Path::new(path).exists() {
         eprintln!(
-            "skipping ext4_on_linear_lv: {path} not present. See test-file \
-             header comment for how to build it."
+            "skipping ext4_on_linear_lv: {path} not present. \
+             Build it via `sudo tests/build-fixture.sh`."
         );
         return Ok(());
     }
 
-    let mut f = File::open(path).whatever_context("opening test image")?;
-    let lvm = Lvm2::open(&mut f).whatever_context("parsing PV")?;
+    let mut f1: EioFile =
+        FromStd::new(File::open(path).whatever_context("opening test image (PV parse)")?);
+    let lvm = Lvm2::open(&mut f1).whatever_context("parsing PV")?;
     let lv = lvm.lvs().next().expect("test image has at least one LV");
     tracing::info!("LV {}", lv.name());
-    let mut olv = lvm.open_lv(lv, &mut f);
+
+    // Re-open the file for the LV reader so the borrow chain stays clean.
+    let f2: EioFile =
+        FromStd::new(File::open(path).whatever_context("re-opening for LV reader")?);
+    let mut olv = lvm.open_lv(lv, f2);
 
     let mut buf = [0u8; 1024];
     olv.read_exact(&mut buf).whatever_context("read prologue")?;
@@ -63,15 +62,15 @@ fn ext4_on_linear_lv() -> Result<(), snafu::Whatever> {
 }
 
 fn read_file(
-    e4: &ext4::SuperBlock<Wrapper<lamlvm::OpenLV<&mut File>>>,
+    e4: &ext4::SuperBlock<Wrapper<lamlvm::OpenLV<'_, EioFile>>>,
     name: &str,
 ) -> String {
     let entry = e4.resolve_path(name).unwrap();
     let inode = e4.load_inode(entry.inode).unwrap();
     let mut ino = e4.open(&inode).unwrap();
-    let mut s = String::new();
-    ino.read_to_string(&mut s).unwrap();
-    s
+    let mut bytes = Vec::new();
+    ino.read_to_end(&mut bytes).unwrap();
+    String::from_utf8(bytes).unwrap()
 }
 
 /// Adapter from our `embedded_io::Read + Seek` types to the `positioned_io::ReadAt`

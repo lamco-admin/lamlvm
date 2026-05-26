@@ -7,7 +7,7 @@ use serde::Deserialize;
 
 use crate::force_de_typed_map::ForceDeTypedMap;
 
-pub(crate) mod deserialize;
+pub mod deserialize;
 
 #[derive(Deserialize, Clone, Debug)]
 pub struct MetadataRoot {

@@ -44,6 +44,19 @@ mod owned;
 pub use lv::*;
 pub use owned::OwnedLvReader;
 
+/// Internal parser entry points re-exported for the fuzz harness only.
+/// **Not stable API.** Behind the `__fuzzing` feature so non-fuzz
+/// consumers can't accidentally reach in.
+#[cfg(feature = "__fuzzing")]
+pub mod __fuzzing {
+    pub use crate::force_de_typed_map::ForceDeTypedMap;
+    pub use crate::header::{
+        MetadataAreaHeader, PhysicalVolumeHeader, PhysicalVolumeLabelHeader,
+    };
+    pub use crate::metadata::MetadataRoot;
+    pub use crate::metadata::deserialize::MetadataElements;
+}
+
 /// Top-level error type for the lamlvm crate.
 ///
 /// I/O errors are reduced to `embedded_io::ErrorKind` rather than carrying
