@@ -48,9 +48,12 @@ std = [
 __fuzzing = []
 
 [dev-dependencies]
-# For the integration test that mounts ext4 on top of an LV. std-only.
-ext4 = "0.9"
-positioned-io = "0.2"
+# For the integration test that mounts ext4 on top of an LV. We use
+# ext4-view rather than the older `ext4` crate because ext4-view handles
+# the modern feature set (metadata_csum_seed in particular, default on
+# Debian 13's mkfs.ext4) and is the same crate lamboot-core ships, so
+# this test validates the real production code path.
+ext4-view = "=0.9.3"
 tracing-subscriber = "0.3"
 # Bridges std::io::{Read,Seek} into embedded_io::{Read,Seek} for the
 # tests that read from real files / Cursors.

@@ -1,6 +1,7 @@
 //! Integration test: open a real LVM PV image, find a linear LV, mount
-//! ext4 on top of it, verify file contents. Mirrors the upstream test
-//! from main--/rust-lvm2 with crate-name + I/O-trait updates for lamlvm.
+//! ext4 on it via `ext4-view`, and read fixture files. This is the same
+//! crate-stack lamboot-core ships in `fs_backend_lvm`, so a green test
+//! here validates the production read path end-to-end.
 //!
 //! The test image `image.raw` is gitignored. Build a fresh one with:
 //!
@@ -8,81 +9,112 @@
 //! sudo tests/build-fixture.sh
 //! ```
 
-use std::cell::RefCell;
+use std::error::Error;
 use std::fs::File;
-use std::io::Read as _;
 
 use embedded_io::{Read, Seek, SeekFrom};
 use embedded_io_adapters::std::FromStd;
-use ext4::Options;
-use lamlvm::Lvm2;
-use positioned_io::ReadAt;
-use snafu::ResultExt;
-use tracing::Level;
+use ext4_view::{Ext4, Ext4Read};
+use lamlvm::{Lvm2, OwnedLvReader};
 
 type EioFile = FromStd<File>;
 
 #[test]
-fn ext4_on_linear_lv() -> Result<(), snafu::Whatever> {
-    let _ = tracing_subscriber::fmt()
-        .with_max_level(Level::TRACE)
-        .try_init();
-
+fn ext4_on_linear_lv_via_ext4_view() {
     let path = "image.raw";
     if !std::path::Path::new(path).exists() {
         eprintln!(
-            "skipping ext4_on_linear_lv: {path} not present. \
+            "skipping ext4_on_linear_lv_via_ext4_view: {path} not present. \
              Build it via `sudo tests/build-fixture.sh`."
         );
-        return Ok(());
+        return;
     }
 
-    let mut f1: EioFile =
-        FromStd::new(File::open(path).whatever_context("opening test image (PV parse)")?);
-    let lvm = Lvm2::open(&mut f1).whatever_context("parsing PV")?;
-    let lv = lvm.lvs().next().expect("test image has at least one LV");
-    tracing::info!("LV {}", lv.name());
+    // Parse the PV + VG metadata.
+    let mut f0: EioFile = FromStd::new(File::open(path).expect("open image.raw (parse)"));
+    let lvm = Lvm2::open(&mut f0).expect("parse PV");
+    let lv = lvm.lvs().next().expect("test fixture has at least one LV");
+    let lv_name = lv.name().to_string();
+    eprintln!("opened VG={} LV={}", lvm.vg_name(), lv_name);
 
-    // Re-open the file for the LV reader so the borrow chain stays clean.
-    let f2: EioFile =
-        FromStd::new(File::open(path).whatever_context("re-opening for LV reader")?);
-    let mut olv = lvm.open_lv(lv, f2);
+    // Open the LV with the owned reader (the API lamboot-core uses).
+    let f_lv: EioFile = FromStd::new(File::open(path).expect("open image.raw (LV)"));
+    let owned = lvm
+        .open_lv_owned_by_name(&lv_name, f_lv)
+        .expect("owned-open errored")
+        .expect("LV not found via owned API");
 
-    let mut buf = [0u8; 1024];
-    olv.read_exact(&mut buf).whatever_context("read prologue")?;
+    eprintln!(
+        "owned LV reader: {} bytes ({} extents)",
+        owned.len(),
+        owned.len() / lvm.extent_size().max(1),
+    );
 
-    let mut options = Options::default();
-    options.checksums = ext4::Checksums::Enabled;
-    let e4 = ext4::SuperBlock::new_with_options(Wrapper(RefCell::new(olv)), &options)
-        .whatever_context("mount ext4")?;
-    assert_eq!(read_file(&e4, "/testfile1"), "foo\n");
-    assert_eq!(read_file(&e4, "/testfile2"), "bar\n");
+    // Mount ext4 on the LV bytes via ext4-view, the same way
+    // `lamboot-core::fs_backend_lvm::LvmExt4Backend` does.
+    let ext4 = Ext4::load(Box::new(LvExt4Adapter { lv: owned })).expect("ext4-view load");
+    eprintln!(
+        "mounted ext4: uuid={} label={:?}",
+        ext4.uuid(),
+        ext4.label().to_str().ok()
+    );
 
-    Ok(())
+    // Verify fixture file contents via two different access patterns to
+    // exercise both the inode-walk and the directory-iterator paths.
+    let testfile1 = ext4
+        .read(ext4_view::Path::new("/testfile1"))
+        .expect("read /testfile1");
+    assert_eq!(testfile1, b"foo\n");
+
+    let testfile2 = ext4
+        .read(ext4_view::Path::new("/testfile2"))
+        .expect("read /testfile2");
+    assert_eq!(testfile2, b"bar\n");
+
+    // Confirm both files show up in / via the directory iterator (which
+    // exercises a different chunk of the LV byte stream).
+    let mut names: Vec<String> = ext4
+        .read_dir(ext4_view::Path::new("/"))
+        .expect("read_dir /")
+        .filter_map(Result::ok)
+        .filter_map(|e| e.file_name().as_str().ok().map(String::from))
+        .filter(|n| n != "." && n != ".." && n != "lost+found")
+        .collect();
+    names.sort();
+    assert_eq!(names, vec!["testfile1".to_string(), "testfile2".to_string()]);
 }
 
-fn read_file(
-    e4: &ext4::SuperBlock<Wrapper<lamlvm::OpenLV<'_, EioFile>>>,
-    name: &str,
-) -> String {
-    let entry = e4.resolve_path(name).unwrap();
-    let inode = e4.load_inode(entry.inode).unwrap();
-    let mut ino = e4.open(&inode).unwrap();
-    let mut bytes = Vec::new();
-    ino.read_to_end(&mut bytes).unwrap();
-    String::from_utf8(bytes).unwrap()
+/// `OwnedLvReader` → `Ext4Read` adapter. Identical pattern to
+/// `lamboot-core/src/fs_backend_lvm.rs::LvExt4Adapter`. Kept inline here
+/// rather than imported so this integration test stays self-contained.
+struct LvExt4Adapter {
+    lv: OwnedLvReader<EioFile>,
 }
 
-/// Adapter from our `embedded_io::Read + Seek` types to the `positioned_io::ReadAt`
-/// trait that the `ext4` crate consumes.
-struct Wrapper<T>(RefCell<T>);
-
-impl<T: Read + Seek> ReadAt for Wrapper<T> {
-    fn read_at(&self, pos: u64, buf: &mut [u8]) -> std::io::Result<usize> {
-        let mut this = self.0.borrow_mut();
-        this.seek(SeekFrom::Start(pos))
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e:?}")))?;
-        this.read(buf)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e:?}")))
+impl Ext4Read for LvExt4Adapter {
+    fn read(
+        &mut self,
+        start_byte: u64,
+        dst: &mut [u8],
+    ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+        self.lv
+            .seek(SeekFrom::Start(start_byte))
+            .map_err(|e| -> Box<dyn Error + Send + Sync> {
+                format!("seek: {e:?}").into()
+            })?;
+        let mut filled = 0;
+        while filled < dst.len() {
+            let n = self
+                .lv
+                .read(&mut dst[filled..])
+                .map_err(|e| -> Box<dyn Error + Send + Sync> {
+                    format!("read: {e:?}").into()
+                })?;
+            if n == 0 {
+                return Err("EOF before read_exact completed".into());
+            }
+            filled += n;
+        }
+        Ok(())
     }
 }
