@@ -39,8 +39,10 @@ mod header;
 mod force_de_typed_map;
 mod lv;
 pub mod metadata;
+mod owned;
 
 pub use lv::*;
+pub use owned::OwnedLvReader;
 
 /// Top-level error type for the lamlvm crate.
 ///
@@ -254,5 +256,14 @@ impl Lvm2 {
     /// resolution; exposed pub(crate) here to keep the resolver in one place).
     pub(crate) fn pv_header(&self) -> &PhysicalVolumeHeader {
         &self.pvh
+    }
+
+    /// Borrowed lookup helper shared by both the borrowing and owning
+    /// LV-open paths.
+    pub(crate) fn vg_config_lookup(
+        &self,
+        name: &str,
+    ) -> Option<(&String, &crate::metadata::LVDesc)> {
+        self.vg_config.logical_volumes.get_key_value(name)
     }
 }
