@@ -1,0 +1,10 @@
+/target
+Cargo.lock
+
+# Test image — not committed (binary, large, easy to regenerate)
+image.raw
+
+# fuzz harness outputs
+fuzz/target
+fuzz/corpus
+fuzz/artifacts

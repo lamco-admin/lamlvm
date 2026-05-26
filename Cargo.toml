@@ -1,0 +1,51 @@
+[package]
+name = "lamlvm"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Read-only LVM2 Logical Volume reader for no_std environments (e.g., UEFI bootloaders). Vendored + modernized fork of main--/rust-lvm2."
+authors = [
+    "Greg Lamberson <greg@lamco.io>",
+    "Lamco Development <office@lamco.io>",
+]
+repository = "https://github.com/lamco-admin/lamlvm"
+homepage = "https://lamco.ai/products/lamboot/"
+readme = "README.md"
+keywords = ["lvm", "lvm2", "uefi", "bootloader", "no_std"]
+categories = ["filesystem", "no-std", "parsing"]
+rust-version = "1.85"
+
+[dependencies]
+# embedded-io: maintained no_std I/O trait library (replaces upstream's acid_io
+# which has been unmaintained since 2022). embedded-io is the embedded-rust
+# ecosystem standard.
+embedded-io = { version = "0.6", default-features = false, features = ["alloc"] }
+
+# nom 7.1 line for parser combinators. nom 7.1 still receives security fixes;
+# nom 8 migration deferred (significant rewrite — closures → trait API).
+nom = { version = "7.1", default-features = false, features = ["alloc"] }
+
+# serde 1.x for metadata text deserialization.
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+
+# snafu 0.8 for error types.
+snafu = { version = "0.8", default-features = false }
+
+# tracing for diagnostic emission (no_std-compatible with default-features = false).
+tracing = { version = "0.1", default-features = false }
+
+[features]
+default = ["std"]
+std = [
+    "embedded-io/std",
+    "nom/std",
+    "serde/std",
+    "snafu/std",
+    "tracing/std",
+]
+
+[dev-dependencies]
+# For the integration test that mounts ext4 on top of an LV. std-only.
+ext4 = "0.9"
+positioned-io = "0.2"
+tracing-subscriber = "0.3"
