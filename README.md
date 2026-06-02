@@ -1,5 +1,10 @@
 # lamlvm
 
+[![Crates.io](https://img.shields.io/crates/v/lamlvm.svg)](https://crates.io/crates/lamlvm)
+[![Docs.rs](https://docs.rs/lamlvm/badge.svg)](https://docs.rs/lamlvm)
+[![CI](https://github.com/lamco-admin/lamlvm/actions/workflows/ci.yml/badge.svg)](https://github.com/lamco-admin/lamlvm/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/lamco-admin/lamlvm/blob/main/LICENSE-MIT)
+
 Read-only LVM2 Logical Volume reader for `no_std` environments — primarily UEFI bootloaders that need to mount a filesystem from a logical volume without pulling in a userspace LVM stack.
 
 Vendored + modernized fork of [main--/rust-lvm2](https://github.com/main--/rust-lvm2). See `PROVENANCE.md` for the origin story and the full list of changes from upstream.

@@ -3,7 +3,7 @@ name = "lamlvm"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-description = "Read-only LVM2 Logical Volume reader for no_std environments (e.g., UEFI bootloaders). Vendored + modernized fork of main--/rust-lvm2."
+description = "read-only no_std LVM2 reader for UEFI bootloaders; maintained fork of rust-lvm2"
 authors = [
     "Greg Lamberson <greg@lamco.io>",
     "Lamco Development LLC <office@lamco.io>",
