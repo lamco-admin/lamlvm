@@ -88,9 +88,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: taiki-e/install-action@v2     # prebuilt binary — avoids the Docker-based action
         with:
-          command: check
+          tool: cargo-deny
+      - run: cargo deny check
 
   fuzz-smoke:
     # Adversarial input testing: lamlvm parses untrusted on-disk bytes, so each
