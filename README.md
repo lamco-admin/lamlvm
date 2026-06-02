@@ -24,17 +24,25 @@ This is a **reader only.** It never writes to a PV.
 ## Usage sketch
 
 ```rust
+use embedded_io::{Read, Seek};
 use lamlvm::Lvm2;
 
-let mut reader = /* embedded_io::Read + Seek over the PV's bytes */;
-let lvm = Lvm2::open(&mut reader)?;
+// `reader` is anything implementing embedded_io::Read + Seek over the PV's
+// bytes — a block device, a partition, or an image file (std callers can
+// wrap a File with the embedded-io-adapters crate). Lvm2::open and
+// open_lv_by_name each borrow it in turn.
+fn read_root_lv<R: Read + Seek>(mut reader: R) -> Result<(), lamlvm::Error> {
+    let lvm = Lvm2::open(&mut reader)?;
 
-// Find the LV by name (e.g., "root" on a typical Proxmox install)
-let open_lv = lvm.open_lv_by_name("root", &mut reader)
-    .ok_or("no LV named 'root' in this VG")?;
-
-// open_lv implements embedded_io::Read + Seek; plug it into your FS crate
-let fs = my_ext4_crate::SuperBlock::new(adapter(open_lv))?;
+    // open_lv_by_name returns None when the VG has no LV by that name.
+    if let Some(open_lv) = lvm.open_lv_by_name("root", &mut reader) {
+        // `open_lv` implements embedded_io::Read + Seek. Hand it to any
+        // filesystem reader (e.g. ext4-view) unchanged — it can't tell the
+        // bytes come from an LV rather than from a bare partition.
+        let _ = open_lv;
+    }
+    Ok(())
+}
 ```
 
 A worked example walking ext4 on top of a real LV is in `examples/walk_ext4_on_lv.rs`.
@@ -45,4 +53,4 @@ Set `default-features = false` for full `no_std` operation. `alloc` is required 
 
 ## License
 
-MIT. See `LICENSE-MIT`. Original copyright held by main-- (2022); modifications copyright Lamco Development (2026).
+MIT. See `LICENSE-MIT`. Original copyright held by main-- (2022); modifications copyright Lamco Development LLC (2026).

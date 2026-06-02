@@ -15,7 +15,7 @@ The original Cargo.toml is preserved as `Cargo.toml.upstream` for reference.
 
 ## Why we vendored
 
-Per `docs/proxmox-host-install/research/LVM-RUST-ECOSYSTEM-SURVEY.md`:
+A survey of the Rust LVM ecosystem found this was the right base to build on:
 
 - Only viable Rust no_std-capable LVM2 read implementation
 - MIT-licensed (compatible with LamBoot's MIT-OR-Apache-2.0 dual)
@@ -49,9 +49,8 @@ The fundamental parser logic and on-disk format handling are unchanged.
 ## Maintenance policy
 
 - We own this fork. Bug fixes + dependency updates land here, not upstream.
-- If we discover broader Rust ecosystem need for an LVM crate, we may publish
-  to crates.io under a different name (e.g., `lamboot-lamlvm`). Not in
-  scope for v0.11.0.
+- Published to crates.io as `lamlvm` — a maintained `no_std` fork, distinct in
+  name from the upstream `lvm2` crate so the two never collide.
 - We do NOT track upstream commits (upstream is dormant; no commits to track).
 
 ## Coverage matrix (what works, what doesn't)

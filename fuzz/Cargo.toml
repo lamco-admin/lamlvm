@@ -5,7 +5,7 @@ publish = false
 edition = "2021"
 authors = [
     "Greg Lamberson <greg@lamco.io>",
-    "Lamco Development <office@lamco.io>",
+    "Lamco Development LLC <office@lamco.io>",
 ]
 license = "MIT"
 

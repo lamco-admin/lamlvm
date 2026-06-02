@@ -6,6 +6,14 @@
 //!
 //! Requires the `image.raw` fixture. Build it via `tests/build-fixture.sh`.
 
+// Integration-test code: panicking on failure (expect/unwrap) is the intended
+// behavior, and inline test constants are fine.
+#![allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::items_after_statements
+)]
+
 use std::fs::File;
 
 use embedded_io::{Read, Seek, SeekFrom};
@@ -83,7 +91,9 @@ fn owned_reader_parity_with_open_lv() {
     for &offset in &[0u64, total_bytes / 3, total_bytes - 512] {
         let mut x = [0u8; 256];
         let mut y = [0u8; 256];
-        borrowed.seek(SeekFrom::Start(offset)).expect("seek borrowed");
+        borrowed
+            .seek(SeekFrom::Start(offset))
+            .expect("seek borrowed");
         owned.seek(SeekFrom::Start(offset)).expect("seek owned");
         borrowed.read_exact(&mut x).expect("read_exact borrowed");
         owned.read_exact(&mut y).expect("read_exact owned");

@@ -19,8 +19,8 @@
 use alloc::vec::Vec;
 use embedded_io::{ErrorType, Read, Seek, SeekFrom};
 
-use crate::lv::{OpenLvError, LV};
 use crate::Lvm2;
+use crate::lv::{LV, OpenLvError};
 
 /// A single segment's LV→PV byte mapping. Within `[lv_start, lv_end)` the
 /// mapping is linear: `pv_byte = pv_base + (lv_byte - lv_start)`.
@@ -56,11 +56,7 @@ impl<T: Read + Seek> OwnedLvReader<T> {
     /// pre-resolving every segment's LV-byte range to a PV-byte base
     /// offset. Returns `Unsupported` if any segment is non-linear,
     /// references a different PV, or extends beyond the PV data area.
-    pub(crate) fn build(
-        lvm: &Lvm2,
-        lv: LV<'_>,
-        reader: T,
-    ) -> Result<Self, OpenLvError<T::Error>> {
+    pub(crate) fn build(lvm: &Lvm2, lv: LV<'_>, reader: T) -> Result<Self, OpenLvError<T::Error>> {
         let extent_size = lvm.extent_size();
         let mut segments = Vec::with_capacity(lv.raw_metadata().segments.0.len());
 
@@ -126,7 +122,7 @@ impl<T: Read + Seek> OwnedLvReader<T> {
         // Sort by lv_start so binary search works in seek().
         segments.sort_unstable_by_key(|s| s.lv_start);
 
-        let lv_len = segments.last().map(|s| s.lv_end).unwrap_or(0);
+        let lv_len = segments.last().map_or(0, |s| s.lv_end);
 
         Ok(Self {
             reader,
@@ -156,19 +152,12 @@ impl<T: Read + Seek> OwnedLvReader<T> {
     fn find_segment(&self, lv_pos: u64) -> Option<&SegmentMap> {
         // Binary search by lv_start; the matching segment is the
         // largest one whose lv_start <= lv_pos and whose lv_end > lv_pos.
-        match self
-            .segments
-            .binary_search_by_key(&lv_pos, |s| s.lv_start)
-        {
+        match self.segments.binary_search_by_key(&lv_pos, |s| s.lv_start) {
             Ok(i) => self.segments.get(i),
             Err(0) => None, // lv_pos < first segment's start
             Err(i) => {
                 let s = self.segments.get(i - 1)?;
-                if lv_pos < s.lv_end {
-                    Some(s)
-                } else {
-                    None
-                }
+                if lv_pos < s.lv_end { Some(s) } else { None }
             }
         }
     }
@@ -209,14 +198,12 @@ impl<T: Read + Seek> Seek for OwnedLvReader<T> {
         let new_pos = match pos {
             SeekFrom::Start(x) => x,
             SeekFrom::End(x) => {
-                let signed =
-                    i64::try_from(self.lv_len).map_err(|_| OpenLvError::SeekOverflow)?;
+                let signed = i64::try_from(self.lv_len).map_err(|_| OpenLvError::SeekOverflow)?;
                 let t = signed.checked_add(x).ok_or(OpenLvError::SeekOverflow)?;
                 u64::try_from(t).map_err(|_| OpenLvError::SeekOverflow)?
             }
             SeekFrom::Current(x) => {
-                let signed =
-                    i64::try_from(self.position).map_err(|_| OpenLvError::SeekOverflow)?;
+                let signed = i64::try_from(self.position).map_err(|_| OpenLvError::SeekOverflow)?;
                 let t = signed.checked_add(x).ok_or(OpenLvError::SeekOverflow)?;
                 u64::try_from(t).map_err(|_| OpenLvError::SeekOverflow)?
             }

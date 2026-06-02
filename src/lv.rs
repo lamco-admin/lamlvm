@@ -3,8 +3,8 @@
 
 use embedded_io::{ErrorKind, ErrorType, Read, Seek, SeekFrom};
 
-use crate::metadata::LVDesc;
 use crate::Lvm2;
+use crate::metadata::LVDesc;
 
 /// A logical volume descriptor, borrowed from a parsed `Lvm2`.
 #[derive(Clone, Copy)]
@@ -29,7 +29,8 @@ impl<'a> LV<'a> {
             .values()
             .map(|x| x.start_extent + x.extent_count)
             .max()
-            .expect("LV has no segments")
+            // A segmentless LV (only reachable from malformed metadata) is zero extents.
+            .unwrap_or(0)
     }
 
     pub fn raw_metadata(&self) -> &'a LVDesc {
@@ -75,18 +76,17 @@ impl<E: embedded_io::Error> embedded_io::Error for OpenLvError<E> {
     fn kind(&self) -> ErrorKind {
         match self {
             OpenLvError::Pv(inner) => inner.kind(),
-            OpenLvError::NoSegment => ErrorKind::InvalidInput,
+            OpenLvError::NoSegment | OpenLvError::SeekOverflow => ErrorKind::InvalidInput,
             OpenLvError::Unsupported(_) => ErrorKind::Unsupported,
-            OpenLvError::SeekOverflow => ErrorKind::InvalidInput,
         }
     }
 }
 
-impl<'a, T: ErrorType> ErrorType for OpenLV<'a, T> {
+impl<T: ErrorType> ErrorType for OpenLV<'_, T> {
     type Error = OpenLvError<T::Error>;
 }
 
-impl<'a, T: Read + Seek> Read for OpenLV<'a, T> {
+impl<T: Read + Seek> Read for OpenLV<'_, T> {
     fn read(&mut self, mut buf: &mut [u8]) -> Result<usize, Self::Error> {
         if self.position == self.current_segment_end {
             // Re-seek to current position to load the next segment's bounds.
@@ -104,7 +104,7 @@ impl<'a, T: Read + Seek> Read for OpenLV<'a, T> {
     }
 }
 
-impl<'a, T: Read + Seek> Seek for OpenLV<'a, T> {
+impl<T: Read + Seek> Seek for OpenLV<'_, T> {
     fn seek(&mut self, pos: SeekFrom) -> Result<u64, Self::Error> {
         // Resolve the target LV-relative byte offset, with checked arithmetic
         // to avoid the silent-wrap behavior of the upstream `as i64 / as u64`
@@ -117,14 +117,12 @@ impl<'a, T: Read + Seek> Seek for OpenLV<'a, T> {
         let pos = match pos {
             SeekFrom::Start(x) => x,
             SeekFrom::End(x) => {
-                let signed = i64::try_from(lv_size_bytes)
-                    .map_err(|_| OpenLvError::SeekOverflow)?;
+                let signed = i64::try_from(lv_size_bytes).map_err(|_| OpenLvError::SeekOverflow)?;
                 let target = signed.checked_add(x).ok_or(OpenLvError::SeekOverflow)?;
                 u64::try_from(target).map_err(|_| OpenLvError::SeekOverflow)?
             }
             SeekFrom::Current(x) => {
-                let signed = i64::try_from(self.position)
-                    .map_err(|_| OpenLvError::SeekOverflow)?;
+                let signed = i64::try_from(self.position).map_err(|_| OpenLvError::SeekOverflow)?;
                 let target = signed.checked_add(x).ok_or(OpenLvError::SeekOverflow)?;
                 u64::try_from(target).map_err(|_| OpenLvError::SeekOverflow)?
             }
@@ -163,9 +161,8 @@ impl<'a, T: Read + Seek> Seek for OpenLV<'a, T> {
                 seek_target += dd.offset;
                 found = true;
                 break;
-            } else {
-                seek_target -= dd.size;
             }
+            seek_target -= dd.size;
         }
         if !found {
             return Err(OpenLvError::Unsupported(

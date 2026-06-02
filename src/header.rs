@@ -9,7 +9,12 @@ use nom::multi::many_till;
 use nom::number::complete::le_u32;
 use nom::number::streaming::le_u64;
 
-
+// Fields mirror the on-disk LVM2 PV label for fidelity and fuzz coverage; the
+// linear-LV reader consumes `data_offset` and leaves the rest unread.
+#[allow(
+    dead_code,
+    reason = "on-disk format fields retained for fidelity/fuzzing"
+)]
 #[derive(Debug)]
 pub struct PhysicalVolumeLabelHeader {
     pub sector_number: u64,
@@ -24,10 +29,22 @@ impl PhysicalVolumeLabelHeader {
         let (input, checksum) = le_u32(input)?;
         let (input, data_offset) = le_u32(input)?;
         let (input, _) = tag(b"LVM2 001")(input)?;
-        Ok((input, Self { sector_number, checksum, data_offset }))
+        Ok((
+            input,
+            Self {
+                sector_number,
+                checksum,
+                data_offset,
+            },
+        ))
     }
 }
 
+// `pv_size` is parsed for format fidelity but not needed to map LV→PV offsets.
+#[allow(
+    dead_code,
+    reason = "on-disk format fields retained for fidelity/fuzzing"
+)]
 #[derive(Debug)]
 pub struct PhysicalVolumeHeader {
     pub pv_ident: String,
@@ -39,11 +56,28 @@ pub struct PhysicalVolumeHeader {
 impl PhysicalVolumeHeader {
     pub fn parse(input: &[u8]) -> IResult<&[u8], Self> {
         let (input, pv_ident_raw) = take(32usize)(input)?;
-        let pv_ident = alloc::str::from_utf8(pv_ident_raw).map_err(|_| nom::Err::Failure(nom::error::Error::from_error_kind(pv_ident_raw, nom::error::ErrorKind::Char)))?.to_owned();
+        let pv_ident = alloc::str::from_utf8(pv_ident_raw)
+            .map_err(|_| {
+                nom::Err::Failure(nom::error::Error::from_error_kind(
+                    pv_ident_raw,
+                    nom::error::ErrorKind::Char,
+                ))
+            })?
+            .to_owned();
         let (input, pv_size) = le_u64(input)?;
-        let (input, (data_descriptors, _)) = many_till(DataDescriptor::parse, tag(&[0u8; 16]))(input)?;
-        let (input, (metadata_descriptors, _)) = many_till(DataDescriptor::parse, tag(&[0u8; 16]))(input)?;
-        Ok((input, Self { pv_ident, pv_size, data_descriptors, metadata_descriptors }))
+        let (input, (data_descriptors, _)) =
+            many_till(DataDescriptor::parse, tag(&[0u8; 16]))(input)?;
+        let (input, (metadata_descriptors, _)) =
+            many_till(DataDescriptor::parse, tag(&[0u8; 16]))(input)?;
+        Ok((
+            input,
+            Self {
+                pv_ident,
+                pv_size,
+                data_descriptors,
+                metadata_descriptors,
+            },
+        ))
     }
 }
 
@@ -61,6 +95,12 @@ impl DataDescriptor {
     }
 }
 
+// checksum/version/offset/size are parsed for fidelity; the reader navigates via
+// `location_descriptors` and does not currently verify the metadata-area checksum.
+#[allow(
+    dead_code,
+    reason = "on-disk format fields retained for fidelity/fuzzing"
+)]
 #[derive(Debug)]
 pub struct MetadataAreaHeader {
     pub checksum: u32,
@@ -77,11 +117,26 @@ impl MetadataAreaHeader {
         let (input, version) = le_u32(input)?;
         let (input, metadata_area_offset) = le_u64(input)?;
         let (input, metadata_area_size) = le_u64(input)?;
-        let (input, (location_descriptors, _)) = many_till(LocationDescriptor::parse, tag(&[0u8; 24]))(input)?;
-        Ok((input, Self { checksum, version, metadata_area_offset, metadata_area_size, location_descriptors }))
+        let (input, (location_descriptors, _)) =
+            many_till(LocationDescriptor::parse, tag(&[0u8; 24]))(input)?;
+        Ok((
+            input,
+            Self {
+                checksum,
+                version,
+                metadata_area_offset,
+                metadata_area_size,
+                location_descriptors,
+            },
+        ))
     }
 }
 
+// `checksum` and `flags` are parsed for fidelity but unused by the reader.
+#[allow(
+    dead_code,
+    reason = "on-disk format fields retained for fidelity/fuzzing"
+)]
 #[derive(Debug)]
 pub struct LocationDescriptor {
     pub data_area_offset: u64,
@@ -96,6 +151,14 @@ impl LocationDescriptor {
         let (input, data_area_size) = le_u64(input)?;
         let (input, checksum) = le_u32(input)?;
         let (input, flags) = le_u32(input)?;
-        Ok((input, Self { data_area_offset, data_area_size, checksum, flags }))
+        Ok((
+            input,
+            Self {
+                data_area_offset,
+                data_area_size,
+                checksum,
+                flags,
+            },
+        ))
     }
 }

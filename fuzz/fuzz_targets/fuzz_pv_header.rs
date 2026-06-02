@@ -1,4 +1,4 @@
-// Copyright 2026 Lamco Development
+// Copyright 2026 Lamco Development LLC
 //
 // Licensed under the MIT license <LICENSE-MIT or
 // https://opensource.org/licenses/MIT>.

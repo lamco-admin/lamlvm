@@ -48,6 +48,6 @@ pub struct LVSegmentDesc {
 }
 impl LVSegmentDesc {
     pub fn extents(&self) -> Range<u64> {
-        self.start_extent .. (self.start_extent + self.extent_count)
+        self.start_extent..(self.start_extent + self.extent_count)
     }
 }

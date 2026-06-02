@@ -15,13 +15,15 @@
 //! # Coverage
 //!
 //! Linear logical volumes on a single physical volume only. Striped,
-//! mirrored, thin pool, snapshot, and cache LVs return [`Error::Unsupported`]
+//! mirrored, thin pool, snapshot, and cache LVs return [`OpenLvError::Unsupported`]
 //! or analogous errors. This covers the canonical layout used by Proxmox VE
 //! and most default single-disk LVM installs. See `PROVENANCE.md` for the
 //! full coverage matrix and the rationale for the narrow scope.
 
 #![no_std]
 #![forbid(unsafe_code)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![deny(rustdoc::broken_intra_doc_links)]
 
 extern crate alloc;
 
@@ -30,13 +32,13 @@ use alloc::vec::Vec;
 
 use embedded_io::{ErrorKind, Read, Seek, SeekFrom};
 use serde::Deserialize;
-use snafu::{Snafu, ensure, OptionExt};
+use snafu::{OptionExt, Snafu, ensure};
 
 use crate::header::{MetadataAreaHeader, PhysicalVolumeHeader, PhysicalVolumeLabelHeader};
-use crate::metadata::{deserialize::MetadataElements, MetadataRoot};
+use crate::metadata::{MetadataRoot, deserialize::MetadataElements};
 
-mod header;
 mod force_de_typed_map;
+mod header;
 mod lv;
 pub mod metadata;
 mod owned;
@@ -50,9 +52,7 @@ pub use owned::OwnedLvReader;
 #[cfg(feature = "__fuzzing")]
 pub mod __fuzzing {
     pub use crate::force_de_typed_map::ForceDeTypedMap;
-    pub use crate::header::{
-        MetadataAreaHeader, PhysicalVolumeHeader, PhysicalVolumeLabelHeader,
-    };
+    pub use crate::header::{MetadataAreaHeader, PhysicalVolumeHeader, PhysicalVolumeLabelHeader};
     pub use crate::metadata::MetadataRoot;
     pub use crate::metadata::deserialize::MetadataElements;
 }
@@ -108,6 +108,10 @@ pub enum Error {
 }
 
 /// Map any `embedded_io::Error` into our flat `Io` variant.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "used as a `map_err` function argument, which must take E by value"
+)]
 fn io_err<E: embedded_io::Error>(e: E) -> Error {
     Error::Io { kind: e.kind() }
 }
@@ -136,29 +140,36 @@ impl Lvm2 {
     /// first byte of a partition that contains LVM2 metadata).
     pub fn open<T: Read + Seek>(mut reader: T) -> Result<Self, Error> {
         // Sheet 0 is zero-padding; PV label header lives at sheet 1.
-        reader
-            .seek(SeekFrom::Start(512))
-            .map_err(io_err)?;
+        reader.seek(SeekFrom::Start(512)).map_err(io_err)?;
 
         let mut buf = [0u8; 512];
         reader.read_exact(&mut buf).map_err(read_exact_err)?;
         tracing::trace!(?buf);
 
-        let (_, vhl) = PhysicalVolumeLabelHeader::parse(&buf)
-            .map_err(|e| Error::Parse { reason: e.to_string() })?;
+        let (_, vhl) = PhysicalVolumeLabelHeader::parse(&buf).map_err(|e| Error::Parse {
+            reason: e.to_string(),
+        })?;
         tracing::trace!(?vhl);
-        let (_, pvh) = PhysicalVolumeHeader::parse(&buf[(vhl.data_offset as usize)..])
-            .map_err(|e| Error::Parse { reason: e.to_string() })?;
+        let (_, pvh) =
+            PhysicalVolumeHeader::parse(&buf[(vhl.data_offset as usize)..]).map_err(|e| {
+                Error::Parse {
+                    reason: e.to_string(),
+                }
+            })?;
         tracing::trace!(?pvh);
 
-        let metadata_descriptor = pvh.metadata_descriptors.first().context(MissingMetadataSnafu)?;
+        let metadata_descriptor = pvh
+            .metadata_descriptors
+            .first()
+            .context(MissingMetadataSnafu)?;
 
         reader
             .seek(SeekFrom::Start(metadata_descriptor.offset))
             .map_err(io_err)?;
         reader.read_exact(&mut buf).map_err(read_exact_err)?;
-        let (_, mah) = MetadataAreaHeader::parse(&buf)
-            .map_err(|e| Error::Parse { reason: e.to_string() })?;
+        let (_, mah) = MetadataAreaHeader::parse(&buf).map_err(|e| Error::Parse {
+            reason: e.to_string(),
+        })?;
         tracing::trace!(?mah);
 
         // Read the VG metadata text. Upstream used `read_to_string` which
@@ -171,29 +182,36 @@ impl Lvm2 {
                     metadata_descriptor.offset + locdesc.data_area_offset,
                 ))
                 .map_err(io_err)?;
-            let len = usize::try_from(locdesc.data_area_size)
-                .map_err(|_| Error::Parse { reason: "metadata area size overflows usize".to_string() })?;
+            let len = usize::try_from(locdesc.data_area_size).map_err(|_| Error::Parse {
+                reason: "metadata area size overflows usize".to_string(),
+            })?;
             let start = metadata_bytes.len();
             metadata_bytes.resize(start + len, 0);
             reader
                 .read_exact(&mut metadata_bytes[start..])
                 .map_err(read_exact_err)?;
         }
-        let metadata = core::str::from_utf8(&metadata_bytes)
-            .map_err(|_| Error::MetadataNotUtf8)?;
+        let metadata = core::str::from_utf8(&metadata_bytes).map_err(|_| Error::MetadataNotUtf8)?;
         tracing::debug!(%metadata);
 
-        let (trailing_garbage, metadata) = MetadataElements::parse(metadata)
-            .map_err(|e| Error::Parse { reason: e.to_string() })?;
+        let (trailing_garbage, metadata) =
+            MetadataElements::parse(metadata).map_err(|e| Error::Parse {
+                reason: e.to_string(),
+            })?;
         tracing::debug!(?trailing_garbage, ?metadata);
 
-        let meta_root = force_de_typed_map::ForceDeTypedMap::<String, MetadataRoot>::deserialize(
-            &metadata,
-        )
-        .map_err(|e| Error::Serde { reason: e.to_string() })?;
+        let meta_root =
+            force_de_typed_map::ForceDeTypedMap::<String, MetadataRoot>::deserialize(&metadata)
+                .map_err(|e| Error::Serde {
+                    reason: e.to_string(),
+                })?;
         tracing::debug!(?meta_root);
 
         ensure!(meta_root.0.len() == 1, MultipleVGsSnafu);
+        #[expect(
+            clippy::unwrap_used,
+            reason = "the ensure! above guarantees exactly one entry"
+        )]
         let (vg_name, vg_config) = meta_root.0.into_iter().next().unwrap();
 
         let pv_name = vg_config
@@ -204,7 +222,12 @@ impl Lvm2 {
             .0
             .clone();
 
-        Ok(Self { pvh, pv_name, vg_name, vg_config })
+        Ok(Self {
+            pvh,
+            pv_name,
+            vg_name,
+            vg_config,
+        })
     }
 
     pub fn pv_id(&self) -> &str {

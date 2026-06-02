@@ -9,6 +9,14 @@
 //! sudo tests/build-fixture.sh
 //! ```
 
+// Integration-test code: panicking on failure (expect/unwrap) is the intended
+// behavior, and inline test constants are fine.
+#![allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::items_after_statements
+)]
+
 use std::error::Error;
 use std::fs::File;
 
@@ -81,7 +89,10 @@ fn ext4_on_linear_lv_via_ext4_view() {
         .filter(|n| n != "." && n != ".." && n != "lost+found")
         .collect();
     names.sort();
-    assert_eq!(names, vec!["testfile1".to_string(), "testfile2".to_string()]);
+    assert_eq!(
+        names,
+        vec!["testfile1".to_string(), "testfile2".to_string()]
+    );
 }
 
 /// `OwnedLvReader` → `Ext4Read` adapter. Identical pattern to
@@ -99,17 +110,13 @@ impl Ext4Read for LvExt4Adapter {
     ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
         self.lv
             .seek(SeekFrom::Start(start_byte))
-            .map_err(|e| -> Box<dyn Error + Send + Sync> {
-                format!("seek: {e:?}").into()
-            })?;
+            .map_err(|e| -> Box<dyn Error + Send + Sync> { format!("seek: {e:?}").into() })?;
         let mut filled = 0;
         while filled < dst.len() {
             let n = self
                 .lv
                 .read(&mut dst[filled..])
-                .map_err(|e| -> Box<dyn Error + Send + Sync> {
-                    format!("read: {e:?}").into()
-                })?;
+                .map_err(|e| -> Box<dyn Error + Send + Sync> { format!("read: {e:?}").into() })?;
             if n == 0 {
                 return Err("EOF before read_exact completed".into());
             }

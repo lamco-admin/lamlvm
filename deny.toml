@@ -1,0 +1,34 @@
+# cargo-deny configuration for lamlvm.
+# Derived from shared/integrated-development/templates/rust/cargo-deny.toml.
+# The CI `deny` job runs `cargo deny check` on every PR; run it locally the same way.
+
+[advisories]
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+
+[licenses]
+# lamlvm and its dependency tree (nom, serde, snafu, tracing, embedded-io, and
+# their transitives) are MIT / Apache-2.0 / Unicode. No copyleft.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "BSL-1.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "CC0-1.0",
+]
+confidence-threshold = 0.8
+
+[bans]
+# Warn on duplicate crate versions rather than fail.
+multiple-versions = "warn"
+
+[sources]
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
+unknown-registry = "deny"
+unknown-git = "warn"

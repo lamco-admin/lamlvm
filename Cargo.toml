@@ -6,14 +6,24 @@ license = "MIT"
 description = "Read-only LVM2 Logical Volume reader for no_std environments (e.g., UEFI bootloaders). Vendored + modernized fork of main--/rust-lvm2."
 authors = [
     "Greg Lamberson <greg@lamco.io>",
-    "Lamco Development <office@lamco.io>",
+    "Lamco Development LLC <office@lamco.io>",
 ]
 repository = "https://github.com/lamco-admin/lamlvm"
 homepage = "https://lamco.ai/products/lamboot/"
+documentation = "https://docs.rs/lamlvm"
 readme = "README.md"
 keywords = ["lvm", "lvm2", "uefi", "bootloader", "no_std"]
 categories = ["filesystem", "no-std", "parsing"]
 rust-version = "1.85"
+include = [
+    "src/**/*.rs",
+    "examples/**/*.rs",
+    "README.md",
+    "PROVENANCE.md",
+    "CHANGELOG.md",
+    "LICENSE-MIT",
+    "Cargo.toml.upstream",
+]
 
 [dependencies]
 # embedded-io: maintained no_std I/O trait library (replaces upstream's acid_io
@@ -58,3 +68,50 @@ tracing-subscriber = "0.3"
 # Bridges std::io::{Read,Seek} into embedded_io::{Read,Seek} for the
 # tests that read from real files / Cursors.
 embedded-io-adapters = { version = "0.6", features = ["std"] }
+
+[package.metadata.docs.rs]
+# Build docs against the `std` feature (the meaningful public surface).
+# `__fuzzing` is deliberately omitted — it re-exports internal parser entry
+# points that are not stable API and must not appear in the published docs.
+features = ["std"]
+targets = ["x86_64-unknown-linux-gnu"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[badges]
+maintenance = { status = "actively-developed" }
+
+[lints.rust]
+elided_lifetimes_in_paths = "warn"
+# `unreachable_pub` intentionally omitted: the header types are `pub` for the
+# `__fuzzing` re-export surface, which the lint cannot see under default features.
+# `unsafe_code` is forbidden crate-wide in lib.rs.
+
+[lints.clippy]
+pedantic = { priority = -1, level = "deny" }
+
+# False-positive-prone pedantic lints, allowed crate-wide.
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+# Doc strings cite format field names and constants verbatim; backticking each
+# term clutters the docs without adding clarity.
+doc_markdown = "allow"
+
+# Binary-format parser: numeric casts between u8/u16/u32/u64/usize are pervasive
+# and deliberate when decoding on-disk LVM2 structures.
+cast_lossless = "allow"
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_sign_loss = "allow"
+cast_precision_loss = "allow"
+
+# `idx`/`id` and segment/sector vocabulary, and verbatim format literals.
+similar_names = "allow"
+unreadable_literal = "allow"
+
+wildcard_imports = "deny"
+
+# Progressive: start as warn, upgrade to deny once the codebase is clean.
+unwrap_used = "warn"
+expect_used = "warn"

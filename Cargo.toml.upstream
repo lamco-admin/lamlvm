@@ -1,0 +1,27 @@
+[package]
+name = "lvm2"
+version = "0.0.3"
+edition = "2021"
+description = "Pure-rust LVM2 parser"
+license = "MIT"
+documentation = "https://docs.rs/lvm2"
+repository = "https://github.com/main--/rust-lvm2"
+exclude = ["image.raw"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+acid_io = { version = "0.1.0", default-features = false, features = ["alloc"] }
+nom = { version = "7.1.1", default-features = false, features = ["alloc"] }
+serde = { version = "1.0.142", default-features = false, features = ["derive"] }
+snafu = { version = "0.7.1", default-features = false }
+tracing = { version = "0.1.36", default-features = false }
+
+[features]
+default = ["std"]
+std = ["acid_io/std", "nom/std", "serde/std", "snafu/std", "tracing/std"]
+
+[dev-dependencies]
+ext4 = "0.9.0"
+positioned-io = "0.2.2"
+tracing-subscriber = "0.3.15"
