@@ -4,6 +4,16 @@ All notable changes to lamlvm are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] — 2026-06-04
+
+### Changed
+
+- Relax the `snafu` dependency from `0.8` to the `0.7` line. lamlvm uses only the
+  stable snafu subset (`#[derive(Snafu)]`, `#[snafu(display)]`, context selectors,
+  `ensure!`, `OptionExt`), identical across 0.7 and 0.8, so 0.7 is sufficient.
+  This matches the version in the Debian archive and avoids forcing a snafu 0.8
+  transition there. (rust-lvm2, the fork upstream, also used snafu 0.7.)
+
 ## [0.1.0] — 2026-06-02
 
 First published release. lamlvm is a maintained `no_std` fork of

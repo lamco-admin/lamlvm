@@ -1,6 +1,6 @@
 [package]
 name = "lamlvm"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license = "MIT"
 description = "read-only no_std LVM2 reader for UEFI bootloaders; maintained fork of rust-lvm2"
@@ -38,8 +38,11 @@ nom = { version = "7.1", default-features = false, features = ["alloc"] }
 # serde 1.x for metadata text deserialization.
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
 
-# snafu 0.8 for error types.
-snafu = { version = "0.8", default-features = false }
+# snafu 0.7 for error types. Pinned to the 0.7 line because lamlvm only uses
+# the stable subset (derive, display, context selectors, ensure!, OptionExt)
+# which is identical across 0.7/0.8, and 0.7 is the version in the Debian
+# archive — keeping the dep aligned avoids forcing a snafu 0.8 transition.
+snafu = { version = "0.7", default-features = false }
 
 # tracing for diagnostic emission (no_std-compatible with default-features = false).
 tracing = { version = "0.1", default-features = false }
