@@ -5,3 +5,11 @@ no_timestamp|unstamped|4194304|620d0ca12a6f2c120a43f0017d7c68935d7f5ba188b1b0a06
 # no_timestamp LV unstamped has no creation_time or creation_host in the on-disk metadata
 striped_and_thin|root|6291456|84814be2299dfdbd6ac8492bf06b375cc0692b952987077a055429a9868a31d7
 # striped_and_thin LVs striped (2 stripes), pool (thin-pool) and thin (thin) must fail to open on their own
+label_sectors|on_pv0|4194304|8dd33c8abda2aa9e1dd59291a6ae7f8a5357eee099da9a9a8c6eda3726f1457f
+label_sectors|on_pv1|4194304|2db8327c5d1c85534907c048373cf2ced5e7a3943389a277fa7902b2a2e213a0
+# label_sectors pv0's label is in sector 0 and pv1's in sector 3; each PV reads the LV it holds
+# mda_ignored pv0's only metadata area is ignored and stale (no LV late); opening pv0 must refuse
+mda_second_copy|root|4194304|9b8e09fed4ec619da8853cc6c35c1731a515a61b42fca3d425645bb73ad4ca28
+# mda_second_copy the first metadata area's text says root has 5 extents (checksum fails); the second says 4
+raid1|mirror|8388608|1d99662dd33ec866adf6c909d54838cf85cb7e3dae7cf5e7aa6873f806a78d2d
+# raid1 mirror is raid1 with rimage_0 on pv0 and rimage_1 on pv1; both PVs read it

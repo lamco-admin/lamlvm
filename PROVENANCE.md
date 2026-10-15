@@ -60,7 +60,8 @@ The fundamental parser logic and on-disk format handling are unchanged.
 | Linear LV on single PV | ✓ supported | Proxmox `pve-root` is always this |
 | Multi-segment linear (extended LV) | ✓ supported | seek is O(n_segments) — acceptable |
 | Striped (RAID-0) | ✗ errors with diagnostic | uncommon on hosts |
-| Mirror (RAID-1/5/6) | ✗ errors with diagnostic | Proxmox uses ZFS for HA-root, not LVM RAID |
+| RAID1 (`--type raid1`) | ✓ supported from 0.1.3 | read through the leg on the PV opened; a leg LVM is rebuilding is skipped |
+| RAID-4/5/6/10, legacy `mirror` | ✗ errors with diagnostic | Proxmox uses ZFS for HA-root, not LVM RAID |
 | Thin pool / thin LV | ✗ errors with diagnostic | Proxmox `pve-data` is thin but we don't read kernels from there |
 | Snapshot LV | ✗ errors with diagnostic | not a Proxmox boot concern |
 | Cache LV (dm-cache) | ✗ errors with diagnostic | uncommon |

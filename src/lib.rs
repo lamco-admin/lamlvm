@@ -14,11 +14,17 @@
 //!
 //! # Coverage
 //!
-//! Linear logical volumes on a single physical volume only. Striped,
-//! mirrored, thin pool, snapshot, and cache LVs return [`OpenLvError::Unsupported`]
-//! or analogous errors. This covers the canonical layout used by Proxmox VE
-//! and most default single-disk LVM installs. See `PROVENANCE.md` for the
-//! full coverage matrix and the rationale for the narrow scope.
+//! Linear logical volumes, and RAID1 logical volumes through a leg on the PV
+//! opened, one physical volume at a time. Striped, thin pool, snapshot, and
+//! cache LVs return [`OpenLvError::Unsupported`] or analogous errors. This
+//! covers the canonical layout used by Proxmox VE and most default
+//! single-disk LVM installs. See `PROVENANCE.md` for the full coverage matrix
+//! and the rationale for the narrow scope.
+//!
+//! The PV label may sit in any of the first four sectors, and its checksum is
+//! checked. Each metadata area's header and committed text are checked
+//! against their checksums, an area marked ignored is skipped, and the next
+//! area on the PV is tried when one is ignored or damaged.
 
 #![no_std]
 #![forbid(unsafe_code)]
@@ -27,6 +33,7 @@
 
 extern crate alloc;
 
+use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
@@ -115,6 +122,140 @@ pub enum Error {
 /// The metadata area header's own size; the ring buffer follows it.
 const MDA_HEADER_SIZE: u64 = 512;
 
+/// A PV label sits in one of the first four 512-byte sectors.
+const LABEL_SCAN_SECTORS: usize = 4;
+/// The label checksum covers the label sector from this byte on (after the
+/// magic, the sector number and the checksum itself).
+const LABEL_CRC_FROM: usize = 20;
+/// `RAW_LOCN_IGNORED`: The metadata area is kept but not used (`pvchange
+/// --metadataignore y`), so its text may be stale.
+const RAW_LOCN_IGNORED: u32 = 0x1;
+/// LVM2's checksum: CRC-32 (reflected polynomial 0xedb88320) seeded with this
+/// value and without a final inversion.
+const LVM_CRC_SEED: u32 = 0xf597_a6cf;
+
+/// LVM2's checksum of `data`, continuing from `crc`.
+fn lvm_crc(mut crc: u32, data: &[u8]) -> u32 {
+    for &byte in data {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            crc = if crc & 1 == 1 {
+                (crc >> 1) ^ 0xedb8_8320
+            } else {
+                crc >> 1
+            };
+        }
+    }
+    crc
+}
+
+/// The PV label header from the first of the first four sectors that holds a
+/// valid one, with that sector's bytes.
+fn find_label<R: Read + Seek>(
+    reader: &mut R,
+) -> Result<(PhysicalVolumeLabelHeader, [u8; 512]), Error> {
+    let mut bad_checksum = false;
+    for sector in 0..LABEL_SCAN_SECTORS {
+        let mut buf = [0u8; 512];
+        reader
+            .seek(SeekFrom::Start((sector * 512) as u64))
+            .map_err(io_err)?;
+        reader.read_exact(&mut buf).map_err(read_exact_err)?;
+        let Ok((_, label)) = PhysicalVolumeLabelHeader::parse(&buf) else {
+            continue;
+        };
+        // The label records its own sector, and a copy found elsewhere (an
+        // image of another PV's start) isn't this PV's label.
+        if label.sector_number != sector as u64 {
+            continue;
+        }
+        if lvm_crc(LVM_CRC_SEED, &buf[LABEL_CRC_FROM..]) != label.checksum {
+            bad_checksum = true;
+            continue;
+        }
+        return Ok((label, buf));
+    }
+    if bad_checksum {
+        return Err(Error::Parse {
+            reason: "PV label checksum doesn't match".to_string(),
+        });
+    }
+    Err(Error::WrongMagic)
+}
+
+/// The committed metadata text in the metadata area that starts at
+/// `mda_start` and is `mda_size` bytes long, after checking the area header's
+/// checksum and position and the text's checksum. The second location slot
+/// is a precommit LVM2 hasn't committed yet, so only the first is read.
+fn read_metadata_area<R: Read + Seek>(
+    reader: &mut R,
+    mda_start: u64,
+    mda_size: u64,
+) -> Result<Vec<u8>, Error> {
+    let bad = |reason: &str| Error::Parse {
+        reason: reason.to_string(),
+    };
+    let mut buf = [0u8; 512];
+    reader.seek(SeekFrom::Start(mda_start)).map_err(io_err)?;
+    reader.read_exact(&mut buf).map_err(read_exact_err)?;
+    let (_, mah) = MetadataAreaHeader::parse(&buf).map_err(|e| Error::Parse {
+        reason: e.to_string(),
+    })?;
+    if lvm_crc(LVM_CRC_SEED, &buf[4..]) != mah.checksum {
+        return Err(bad("metadata area header checksum doesn't match"));
+    }
+    if mah.version != 1 {
+        return Err(bad("metadata area header version isn't 1"));
+    }
+    if mah.metadata_area_offset != mda_start || mah.metadata_area_size > mda_size {
+        return Err(bad("metadata area header doesn't describe its own area"));
+    }
+    let committed = mah
+        .location_descriptors
+        .first()
+        .context(MissingMetadataSnafu)?;
+    if committed.flags & RAW_LOCN_IGNORED != 0 {
+        return Err(bad("metadata area is marked ignored"));
+    }
+    let text = read_metadata_ring(reader, mda_start, &mah, committed)?;
+    if lvm_crc(LVM_CRC_SEED, &text) != committed.checksum {
+        return Err(bad("metadata text checksum doesn't match"));
+    }
+    Ok(text)
+}
+
+/// The RAID1 legs of each LV segment, read from the same metadata text as
+/// [`MetadataRoot`] but kept out of its public types.
+#[derive(Deserialize)]
+struct RaidVgDesc {
+    #[serde(default)]
+    logical_volumes: BTreeMap<String, RaidLvDesc>,
+}
+
+#[derive(Deserialize)]
+struct RaidLvDesc {
+    #[serde(flatten)]
+    segments: force_de_typed_map::ForceDeTypedMap<String, RaidSegDesc>,
+}
+
+#[derive(Deserialize)]
+struct RaidSegDesc {
+    r#type: String,
+    #[serde(default)]
+    raids: Vec<String>,
+    #[serde(default)]
+    data_offset: u64,
+}
+
+/// A RAID1 segment's data legs (`rimage` sub-LVs), in leg order.
+#[derive(Debug, Clone)]
+pub(crate) struct RaidLegs {
+    pub(crate) images: Vec<String>,
+    /// Set when the legs don't start their data at their first extent (a
+    /// reshape), which isn't read.
+    pub(crate) data_offset: u64,
+}
+
 /// Read the metadata text a location descriptor names from the area that
 /// starts at `mda_start`, joining the two pieces when it wraps the ring.
 fn read_metadata_ring<R: Read + Seek>(
@@ -176,6 +317,8 @@ pub struct Lvm2 {
     pv_name: String,
     vg_name: String,
     vg_config: MetadataRoot,
+    /// RAID1 legs by `(LV name, segment name)`.
+    raid_legs: BTreeMap<(String, String), RaidLegs>,
 }
 
 impl Lvm2 {
@@ -184,50 +327,38 @@ impl Lvm2 {
     /// `reader` must be positioned over the start of the PV (typically the
     /// first byte of a partition that contains LVM2 metadata).
     pub fn open<T: Read + Seek>(mut reader: T) -> Result<Self, Error> {
-        // Sheet 0 is zero-padding; PV label header lives at sheet 1.
-        reader.seek(SeekFrom::Start(512)).map_err(io_err)?;
-
-        let mut buf = [0u8; 512];
-        reader.read_exact(&mut buf).map_err(read_exact_err)?;
-        tracing::trace!(?buf);
-
-        let (_, vhl) = PhysicalVolumeLabelHeader::parse(&buf).map_err(|e| Error::Parse {
+        let (vhl, label_sector) = find_label(&mut reader)?;
+        tracing::trace!(?vhl);
+        let pvh_bytes = usize::try_from(vhl.data_offset)
+            .ok()
+            .and_then(|at| label_sector.get(at..))
+            .ok_or_else(|| Error::Parse {
+                reason: "PV header offset lies outside the label sector".to_string(),
+            })?;
+        let (_, pvh) = PhysicalVolumeHeader::parse(pvh_bytes).map_err(|e| Error::Parse {
             reason: e.to_string(),
         })?;
-        tracing::trace!(?vhl);
-        let (_, pvh) =
-            PhysicalVolumeHeader::parse(&buf[(vhl.data_offset as usize)..]).map_err(|e| {
-                Error::Parse {
-                    reason: e.to_string(),
-                }
-            })?;
         tracing::trace!(?pvh);
 
-        let metadata_descriptor = pvh
-            .metadata_descriptors
-            .first()
-            .context(MissingMetadataSnafu)?;
-
-        reader
-            .seek(SeekFrom::Start(metadata_descriptor.offset))
-            .map_err(io_err)?;
-        reader.read_exact(&mut buf).map_err(read_exact_err)?;
-        let (_, mah) = MetadataAreaHeader::parse(&buf).map_err(|e| Error::Parse {
-            reason: e.to_string(),
-        })?;
-        tracing::trace!(?mah);
-
-        // The committed VG metadata text is the first location descriptor; the
-        // second, when present, is a precommit that hasn't been committed yet.
-        // The text sits in a ring buffer that starts right after the 512-byte
-        // area header, so a long-lived VG's text can run past the end of the
-        // area and continue at its start.
-        let committed = mah
-            .location_descriptors
-            .first()
-            .context(MissingMetadataSnafu)?;
-        let metadata_bytes =
-            read_metadata_ring(&mut reader, metadata_descriptor.offset, &mah, committed)?;
+        // A PV carries one or two metadata areas. Use the first whose header
+        // and committed text check out, so an ignored or damaged area falls
+        // back to the other copy.
+        let mut last_error = None;
+        let mut metadata_bytes = None;
+        for area in &pvh.metadata_descriptors {
+            match read_metadata_area(&mut reader, area.offset, area.size) {
+                Ok(text) => {
+                    metadata_bytes = Some(text);
+                    break;
+                }
+                Err(e) => last_error = Some(e),
+            }
+        }
+        let metadata_bytes = match (metadata_bytes, last_error) {
+            (Some(text), _) => text,
+            (None, Some(e)) => return Err(e),
+            (None, None) => return MissingMetadataSnafu.fail(),
+        };
         let metadata = core::str::from_utf8(&metadata_bytes).map_err(|_| Error::MetadataNotUtf8)?;
         tracing::debug!(%metadata);
 
@@ -239,6 +370,11 @@ impl Lvm2 {
 
         let meta_root =
             force_de_typed_map::ForceDeTypedMap::<String, MetadataRoot>::deserialize(&metadata)
+                .map_err(|e| Error::Serde {
+                    reason: e.to_string(),
+                })?;
+        let raid_vgs =
+            force_de_typed_map::ForceDeTypedMap::<String, RaidVgDesc>::deserialize(&metadata)
                 .map_err(|e| Error::Serde {
                     reason: e.to_string(),
                 })?;
@@ -259,11 +395,31 @@ impl Lvm2 {
             .0
             .clone();
 
+        // rimage sub-LVs alternate with rmeta ones in `raids`.
+        let mut raid_legs = BTreeMap::new();
+        if let Some(raid_vg) = raid_vgs.0.into_values().next() {
+            for (lv_name, lv) in raid_vg.logical_volumes {
+                for (seg_name, seg) in lv.segments.0 {
+                    if seg.r#type == "raid1" {
+                        let images = seg.raids.into_iter().skip(1).step_by(2).collect();
+                        raid_legs.insert(
+                            (lv_name.clone(), seg_name),
+                            RaidLegs {
+                                images,
+                                data_offset: seg.data_offset,
+                            },
+                        );
+                    }
+                }
+            }
+        }
+
         Ok(Self {
             pvh,
             pv_name,
             vg_name,
             vg_config,
+            raid_legs,
         })
     }
 
@@ -329,6 +485,18 @@ impl Lvm2 {
     /// resolution; exposed pub(crate) here to keep the resolver in one place).
     pub(crate) fn pv_header(&self) -> &PhysicalVolumeHeader {
         &self.pvh
+    }
+
+    /// The RAID1 legs of segment `seg_name` of LV `lv_name`, if it's a RAID1
+    /// segment.
+    pub(crate) fn raid_legs(&self, lv_name: &str, seg_name: &str) -> Option<&RaidLegs> {
+        self.raid_legs
+            .get(&(String::from(lv_name), String::from(seg_name)))
+    }
+
+    /// A sub-LV (a RAID1 leg) by name.
+    pub(crate) fn sub_lv(&self, name: &str) -> Option<&crate::metadata::LVDesc> {
+        self.vg_config.logical_volumes.get(name)
     }
 
     /// Borrowed lookup helper shared by both the borrowing and owning

@@ -19,8 +19,8 @@ Vendored + modernized fork of [main--/rust-lvm2](https://github.com/main--/rust-
 
 Given any `embedded_io::Read + Seek` source that holds an LVM2 Physical Volume (typically a block device or partition):
 
-1. Parses the PV label (`LABELONE` signature at sector 1) and PV header.
-2. Reads the Volume Group metadata text (LVM2 format-text in the metadata area).
+1. Finds the PV label (`LABELONE`) in any of the first four sectors, checks its checksum, and parses the PV header.
+2. Reads the Volume Group metadata text (LVM2 format-text) from the first metadata area whose header and committed text pass their checksums. An area marked ignored (`pvchange --metadataignore y`) is skipped, since its text may be stale, and a PV with two areas falls back to the second when the first is ignored or damaged.
 3. Enumerates the Logical Volumes in the VG.
 4. Returns each LV as an `OpenLV` that itself implements `embedded_io::Read + Seek`, with offsets mapped from LV space to PV space via the segment table.
 
@@ -28,7 +28,7 @@ Existing filesystem crates (ext4 readers, btrfs readers, etc.) plug onto the `Op
 
 ## What it doesn't do
 
-Only linear LVs on a single PV are read. Striped, mirrored (RAID-1/5/6), thin pool, snapshot, and cache LVs fail to open with `OpenLvError::Unsupported`, and since 0.1.2 they fail on their own: The rest of the volume group still opens and its linear LVs still read. This covers the canonical layout used by Proxmox VE and most default single-disk LVM installs. See `PROVENANCE.md` for the full coverage matrix and the rationale for the narrow scope.
+Linear LVs are read, and from 0.1.3 RAID1 LVs through the leg on the PV opened (every leg holds the full data). Striped, RAID-4/5/6/10, thin pool, snapshot, and cache LVs fail to open with `OpenLvError::Unsupported`, and since 0.1.2 they fail on their own: The rest of the volume group still opens and its readable LVs still read. This covers the canonical layout used by Proxmox VE and most default single-disk LVM installs. See `PROVENANCE.md` for the full coverage matrix and the rationale for the narrow scope.
 
 This is a **reader only.** It never writes to a PV.
 
@@ -80,7 +80,10 @@ Set `default-features = false` for full `no_std` operation. `alloc` is required 
 - Oracle tests against images the LVM2 tools made on loop devices
   (`tests/fixtures.rs`; regenerate with `tests/fixtures/regenerate.sh`): A
   volume group whose committed metadata wraps its ring buffer, an LV without
-  creation timestamps, and a linear root next to a striped LV and a thin pool.
+  creation timestamps, a linear root next to a striped LV and a thin pool,
+  labels in sectors 0 and 3, an ignored and stale metadata area, a damaged
+  first metadata area with a good second one, and a RAID1 LV with a leg on
+  each PV.
   Every readable LV must match the SHA-256 device-mapper gave for it, and the
   others must fail on their own.
 - An ext4-on-LV test that runs when a locally built `image.raw` is present

@@ -14,7 +14,7 @@ export PATH="/usr/sbin:/sbin:$PATH"
 cd "$(dirname "$0")"
 FX="$PWD"
 MAN=MANIFEST
-ALL="wrapped_metadata no_timestamp striped_and_thin"
+ALL="wrapped_metadata no_timestamp striped_and_thin label_sectors mda_ignored mda_second_copy raid1"
 # No thin_check on the build host; the kernel's dm-thin-pool is enough here.
 THIN='global { thin_check_executable = "" }'
 
@@ -201,6 +201,115 @@ build_striped_and_thin() {
   finish "$name"
 }
 
+# Labels in sector 0 and sector 3 instead of the usual sector 1, on two PVs
+# with one LV each.
+build_label_sectors() {
+  local name=label_sectors
+  VG=lamlvm_lsec
+  attach "$name" 2 16M
+  sudo pvcreate -q --labelsector 0 "${LOOPS[0]}" >/dev/null
+  sudo pvcreate -q --labelsector 3 "${LOOPS[1]}" >/dev/null
+  sudo vgcreate -q -s 1m "$VG" "${LOOPS[@]}" >/dev/null
+  sudo lvcreate -q -y -n on_pv0 -L 4m "$VG" "${LOOPS[0]}" >/dev/null
+  sudo lvcreate -q -y -n on_pv1 -L 4m "$VG" "${LOOPS[1]}" >/dev/null
+  fill "$VG" on_pv0 "lamlvm label in sector 0"
+  fill "$VG" on_pv1 "lamlvm label in sector 3"
+  record "$name" "$VG" on_pv0
+  record "$name" "$VG" on_pv1
+  note "$name" "pv0's label is in sector 0 and pv1's in sector 3; each PV reads the LV it holds"
+  detach
+  finish "$name"
+}
+
+# pv0's metadata area is marked ignored, and an LV is created afterwards, so
+# the text still in that area is stale. pv1 holds the current metadata.
+build_mda_ignored() {
+  local name=mda_ignored
+  VG=lamlvm_ign
+  attach "$name" 2 16M
+  sudo pvcreate -q "${LOOPS[@]}" >/dev/null
+  sudo vgcreate -q -s 1m "$VG" "${LOOPS[@]}" >/dev/null
+  sudo lvcreate -q -y -n root -L 4m "$VG" "${LOOPS[0]}" >/dev/null
+  sudo pvchange -q --metadataignore y "${LOOPS[0]}" >/dev/null
+  sudo lvcreate -q -y -n late -L 2m "$VG" "${LOOPS[0]}" >/dev/null
+  fill "$VG" root "lamlvm root beside an ignored metadata area"
+  metadata_text "$name.pv0.img" > "$WORK/text"
+  grep -q 'late {' "$WORK/text" && { echo "$name: ignored area was updated" >&2; exit 1; }
+  note "$name" "pv0's only metadata area is ignored and stale (no LV late); opening pv0 must refuse"
+  detach
+  finish "$name"
+}
+
+# Two metadata areas on one PV; the committed text in the first is damaged
+# after the VG is deactivated, so it still parses but its checksum fails, and
+# the reader must use the second copy.
+build_mda_second_copy() {
+  local name=mda_second_copy
+  VG=lamlvm_mda2
+  attach "$name" 1 24M
+  sudo pvcreate -q --metadatacopies 2 "${LOOPS[0]}" >/dev/null
+  sudo vgcreate -q -s 1m "$VG" "${LOOPS[0]}" >/dev/null
+  sudo lvcreate -q -y -n root -L 4m "$VG" >/dev/null
+  fill "$VG" root "lamlvm root with two metadata copies"
+  record "$name" "$VG" root
+  detach
+  python3 - "$name.pv0.img" <<'PY'
+import struct, sys
+path = sys.argv[1]
+img = open(path, 'r+b')
+img.seek(512)
+label = img.read(512)
+pvh = 512 + struct.unpack_from('<I', label, 20)[0]
+img.seek(pvh)
+hdr = img.read(512)
+at = 40
+while struct.unpack_from('<Q', hdr, at)[0]:
+    at += 16
+at += 16
+mdas = []
+while struct.unpack_from('<Q', hdr, at)[0]:
+    mdas.append(struct.unpack_from('<Q', hdr, at)[0])
+    at += 16
+assert len(mdas) == 2, mdas
+img.seek(mdas[0])
+mh = img.read(512)
+off, size = struct.unpack_from('<QQ', mh, 40)
+img.seek(mdas[0] + off)
+text = img.read(size)
+old = b'extent_count = 4'
+assert text.count(old) == 1, 'root segment not found once'
+pos = mdas[0] + off + text.index(old)
+img.seek(pos)
+img.write(b'extent_count = 5')
+PY
+  note "$name" "the first metadata area's text says root has 5 extents (checksum fails); the second says 4"
+  finish "$name"
+}
+
+# A RAID1 LV with one leg on each PV. Opening either PV reads the leg it holds.
+build_raid1() {
+  local name=raid1 i pct
+  VG=lamlvm_raid1
+  attach "$name" 2 32M
+  sudo pvcreate -q "${LOOPS[@]}" >/dev/null
+  sudo vgcreate -q -s 1m "$VG" "${LOOPS[@]}" >/dev/null
+  sudo lvcreate -q -y --type raid1 -m 1 -R 1m -n mirror -L 8m "$VG" >/dev/null
+  for i in $(seq 1 120); do
+    pct=$(sudo lvs --noheadings -o sync_percent "$VG/mirror" | tr -d ' ')
+    [ "$pct" = "100.00" ] && break
+    sleep 1
+  done
+  fill "$VG" mirror "lamlvm raid1 mirror"
+  sudo lvchange -q --syncaction check "$VG/mirror" >/dev/null 2>&1 || true
+  sleep 2
+  record "$name" "$VG" mirror
+  note "$name" "mirror is raid1 with rimage_0 on pv0 and rimage_1 on pv1; both PVs read it"
+  detach
+  finish "$name"
+}
+
+# $ALL is a space-separated list of names, split on purpose.
+# shellcheck disable=SC2086
 [ $# -gt 0 ] || set -- $ALL
 touch "$MAN"
 echo "generating fixtures:"

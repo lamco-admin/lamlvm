@@ -4,6 +4,38 @@ All notable changes to lamlvm are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] - 2026-10-15
+
+### Fixed
+
+- **An ignored metadata area was read.** A PV whose metadata area is marked
+  ignored (`pvchange --metadataignore y`) keeps the text from before, which
+  LVM2 stops updating, so 0.1.2 opened the volume group with stale metadata:
+  An LV created afterwards was missing and a resized one had its old size. An
+  ignored area is skipped now, and a PV whose only area is ignored is refused.
+- **Checksums were never checked.** The PV label, each metadata area header
+  and the committed metadata text all carry LVM2's checksum. A damaged label
+  or area header is refused, and damaged text that still parsed was read as
+  the volume group's layout; now the next metadata area is used.
+- **Only the first metadata area was read.** A PV made with
+  `--metadatacopies 2` falls back to its second area when the first is
+  ignored or fails a check.
+- **The label was looked for in sector 1 only.** LVM2 can put it in any of the
+  first four sectors (`pvcreate --labelsector`); all four are searched, and a
+  label must name its own sector.
+- A PV header offset past the end of the label sector panicked; it's a parse
+  error now.
+
+### Added
+
+- **RAID1 LVs** read through the leg on the PV opened, where 0.1.2 refused
+  them as not linear. A leg LVM is rebuilding, or legs that keep their data
+  past their first extent (a reshape), aren't read.
+- Fixtures built with the LVM2 tools: Labels in sectors 0 and 3, an ignored
+  and stale metadata area, a damaged first metadata area with a good second
+  one, and a RAID1 LV with a leg on each PV. Six of the nine fixture tests
+  fail on 0.1.2.
+
 ## [0.1.2] - 2026-10-15
 
 ### Fixed

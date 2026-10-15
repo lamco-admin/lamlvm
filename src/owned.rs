@@ -54,69 +54,31 @@ impl<T: ErrorType> ErrorType for OwnedLvReader<T> {
 impl<T: Read + Seek> OwnedLvReader<T> {
     /// Build an owned reader from an `Lvm2` + `LV` + a PV reader, by
     /// pre-resolving every segment's LV-byte range to a PV-byte base
-    /// offset. Returns `Unsupported` if any segment is non-linear,
-    /// references a different PV, or extends beyond the PV data area.
+    /// offset (a RAID1 segment through its leg on this PV). Returns
+    /// `Unsupported` if any segment is neither, references a different PV,
+    /// or extends beyond the PV data area.
     pub(crate) fn build(lvm: &Lvm2, lv: LV<'_>, reader: T) -> Result<Self, OpenLvError<T::Error>> {
         let extent_size = lvm.extent_size();
         let mut segments = Vec::with_capacity(lv.raw_metadata().segments.0.len());
 
-        for seg in lv.raw_metadata().segments.0.values() {
-            if seg.r#type != "striped" || seg.stripe_count != Some(1) {
-                return Err(OpenLvError::Unsupported("segment is not linear"));
-            }
-            let (pv, pv_extent) = seg
-                .stripes
-                .as_ref()
-                .ok_or(OpenLvError::Unsupported("segment has no stripes"))?;
-            if pv != lvm.pv_name() {
-                return Err(OpenLvError::Unsupported(
-                    "segment data is on a different PV than the one opened",
-                ));
-            }
-
-            let lv_start = seg
-                .start_extent
-                .checked_mul(extent_size)
-                .ok_or(OpenLvError::SeekOverflow)?;
-            let seg_bytes = seg
-                .extent_count
-                .checked_mul(extent_size)
-                .ok_or(OpenLvError::SeekOverflow)?;
-            let lv_end = lv_start
-                .checked_add(seg_bytes)
-                .ok_or(OpenLvError::SeekOverflow)?;
-
-            // Resolve the PV-extent index to a byte offset on the PV by
-            // walking the data descriptors. Same logic as the borrowed
-            // variant in lv.rs — kept duplicated here to avoid pulling
-            // pv_header into a public surface.
-            let mut seek_target = pv_extent
-                .checked_mul(extent_size)
-                .ok_or(OpenLvError::SeekOverflow)?;
-            let mut resolved = false;
-            for dd in &lvm.pv_header().data_descriptors {
-                if dd.size == 0 || dd.size > seek_target {
-                    seek_target = seek_target
-                        .checked_add(dd.offset)
-                        .ok_or(OpenLvError::SeekOverflow)?;
-                    resolved = true;
-                    break;
-                }
-                seek_target = seek_target
-                    .checked_sub(dd.size)
+        for (seg_name, seg) in &lv.raw_metadata().segments.0 {
+            let runs = crate::lv::segment_runs(lvm, lv.name(), seg_name, seg)
+                .map_err(OpenLvError::Unsupported)?;
+            for run in runs {
+                let lv_start = run
+                    .lv_start
+                    .checked_mul(extent_size)
                     .ok_or(OpenLvError::SeekOverflow)?;
+                let lv_end = run
+                    .lv_end
+                    .checked_mul(extent_size)
+                    .ok_or(OpenLvError::SeekOverflow)?;
+                segments.push(SegmentMap {
+                    lv_start,
+                    lv_end,
+                    pv_base: run.pv_base,
+                });
             }
-            if !resolved {
-                return Err(OpenLvError::Unsupported(
-                    "data is beyond the end of this PV",
-                ));
-            }
-
-            segments.push(SegmentMap {
-                lv_start,
-                lv_end,
-                pv_base: seek_target,
-            });
         }
 
         // Sort by lv_start so binary search works in seek().
