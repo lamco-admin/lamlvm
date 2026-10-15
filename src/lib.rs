@@ -28,13 +28,16 @@
 extern crate alloc;
 
 use alloc::string::{String, ToString};
+use alloc::vec;
 use alloc::vec::Vec;
 
 use embedded_io::{ErrorKind, Read, Seek, SeekFrom};
 use serde::Deserialize;
 use snafu::{OptionExt, Snafu, ensure};
 
-use crate::header::{MetadataAreaHeader, PhysicalVolumeHeader, PhysicalVolumeLabelHeader};
+use crate::header::{
+    LocationDescriptor, MetadataAreaHeader, PhysicalVolumeHeader, PhysicalVolumeLabelHeader,
+};
 use crate::metadata::{MetadataRoot, deserialize::MetadataElements};
 
 mod force_de_typed_map;
@@ -52,7 +55,9 @@ pub use owned::OwnedLvReader;
 #[cfg(feature = "__fuzzing")]
 pub mod __fuzzing {
     pub use crate::force_de_typed_map::ForceDeTypedMap;
-    pub use crate::header::{MetadataAreaHeader, PhysicalVolumeHeader, PhysicalVolumeLabelHeader};
+    pub use crate::header::{
+        LocationDescriptor, MetadataAreaHeader, PhysicalVolumeHeader, PhysicalVolumeLabelHeader,
+    };
     pub use crate::metadata::MetadataRoot;
     pub use crate::metadata::deserialize::MetadataElements;
 }
@@ -105,6 +110,46 @@ pub enum Error {
     /// VG metadata bytes were not valid UTF-8.
     #[snafu(display("metadata text was not valid UTF-8"))]
     MetadataNotUtf8,
+}
+
+/// The metadata area header's own size; the ring buffer follows it.
+const MDA_HEADER_SIZE: u64 = 512;
+
+/// Read the metadata text a location descriptor names from the area that
+/// starts at `mda_start`, joining the two pieces when it wraps the ring.
+fn read_metadata_ring<R: Read + Seek>(
+    reader: &mut R,
+    mda_start: u64,
+    mah: &MetadataAreaHeader,
+    locdesc: &LocationDescriptor,
+) -> Result<Vec<u8>, Error> {
+    let bad = |reason: &str| Error::Parse {
+        reason: reason.to_string(),
+    };
+    let area = mah.metadata_area_size;
+    let (offset, size) = (locdesc.data_area_offset, locdesc.data_area_size);
+    if offset < MDA_HEADER_SIZE || offset >= area || size > area - MDA_HEADER_SIZE {
+        return Err(bad("metadata text lies outside its metadata area"));
+    }
+    let len = usize::try_from(size).map_err(|_| bad("metadata area size overflows usize"))?;
+    let first = usize::try_from(size.min(area - offset))
+        .map_err(|_| bad("metadata area size overflows usize"))?;
+    let mut text = vec![0u8; len];
+    reader
+        .seek(SeekFrom::Start(mda_start + offset))
+        .map_err(io_err)?;
+    reader
+        .read_exact(&mut text[..first])
+        .map_err(read_exact_err)?;
+    if first < len {
+        reader
+            .seek(SeekFrom::Start(mda_start + MDA_HEADER_SIZE))
+            .map_err(io_err)?;
+        reader
+            .read_exact(&mut text[first..])
+            .map_err(read_exact_err)?;
+    }
+    Ok(text)
 }
 
 /// Map any `embedded_io::Error` into our flat `Io` variant.
@@ -172,25 +217,17 @@ impl Lvm2 {
         })?;
         tracing::trace!(?mah);
 
-        // Read the VG metadata text. Upstream used `read_to_string` which
-        // doesn't exist on embedded-io. Equivalent: allocate per
-        // location descriptor, read_exact, then UTF-8-validate at the end.
-        let mut metadata_bytes: Vec<u8> = Vec::new();
-        for locdesc in &mah.location_descriptors {
-            reader
-                .seek(SeekFrom::Start(
-                    metadata_descriptor.offset + locdesc.data_area_offset,
-                ))
-                .map_err(io_err)?;
-            let len = usize::try_from(locdesc.data_area_size).map_err(|_| Error::Parse {
-                reason: "metadata area size overflows usize".to_string(),
-            })?;
-            let start = metadata_bytes.len();
-            metadata_bytes.resize(start + len, 0);
-            reader
-                .read_exact(&mut metadata_bytes[start..])
-                .map_err(read_exact_err)?;
-        }
+        // The committed VG metadata text is the first location descriptor; the
+        // second, when present, is a precommit that hasn't been committed yet.
+        // The text sits in a ring buffer that starts right after the 512-byte
+        // area header, so a long-lived VG's text can run past the end of the
+        // area and continue at its start.
+        let committed = mah
+            .location_descriptors
+            .first()
+            .context(MissingMetadataSnafu)?;
+        let metadata_bytes =
+            read_metadata_ring(&mut reader, metadata_descriptor.offset, &mah, committed)?;
         let metadata = core::str::from_utf8(&metadata_bytes).map_err(|_| Error::MetadataNotUtf8)?;
         tracing::debug!(%metadata);
 

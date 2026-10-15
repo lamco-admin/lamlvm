@@ -4,6 +4,40 @@ All notable changes to lamlvm are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-10-15
+
+### Fixed
+
+- A volume group whose committed metadata wraps its ring buffer failed to open
+  with `MetadataNotUtf8`. LVM2 writes each new copy of the metadata after the
+  last one in a ring that starts right after the 512-byte area header, so a
+  long-lived VG (a Proxmox host with many VM disks, say) eventually has its
+  copy run past the end and continue at the start. The text is now read in its
+  two pieces.
+- Only the committed copy of the metadata is read. 0.1.1 joined every location
+  descriptor's text, which reads garbage if a precommitted copy is present.
+- An LV with no `creation_time` or `creation_host`, which LVM2 leaves out for
+  an LV without a timestamp, made the whole VG fail to open. The fields
+  default to 0 and an empty string.
+- A segment with more than one stripe made the whole VG fail to open, because
+  `stripes` was parsed as exactly one PV and extent. It now parses any number;
+  `stripes` holds the pair only for a one-stripe segment, so the rest of the
+  VG opens and only opening that LV fails with `OpenLvError::Unsupported`.
+
+### Changed
+
+- snafu 0.9, since Debian sid carries only snafu 0.9 and 0.7 kept lamlvm out
+  of the archive. Nothing in lamlvm's use of it changes.
+- The description names Lamco Development LLC, the README gains website,
+  documentation and install links, testing and contributing sections, and CI
+  also runs weekly.
+
+### Added
+
+- Oracle tests against images the LVM2 tools made: a wrapped metadata ring, an
+  LV without timestamps, and a linear root beside a striped LV and a thin pool.
+  The tests need Rust 1.87 for ruzstd 0.9.1; the library's MSRV stays 1.85.
+
 ## [0.1.1] — 2026-06-04
 
 ### Changed

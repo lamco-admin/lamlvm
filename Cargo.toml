@@ -1,9 +1,9 @@
 [package]
 name = "lamlvm"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 license = "MIT"
-description = "read-only no_std LVM2 reader for UEFI bootloaders; maintained fork of rust-lvm2"
+description = "no_std read-only LVM2 reader for UEFI bootloaders, a maintained fork of rust-lvm2, from Lamco Development LLC"
 authors = [
     "Greg Lamberson <greg@lamco.io>",
     "Lamco Development LLC <office@lamco.io>",
@@ -38,11 +38,11 @@ nom = { version = "7.1", default-features = false, features = ["alloc"] }
 # serde 1.x for metadata text deserialization.
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
 
-# snafu 0.7 for error types. Pinned to the 0.7 line because lamlvm only uses
-# the stable subset (derive, display, context selectors, ensure!, OptionExt)
-# which is identical across 0.7/0.8, and 0.7 is the version in the Debian
-# archive — keeping the dep aligned avoids forcing a snafu 0.8 transition.
-snafu = { version = "0.7", default-features = false }
+# snafu for error types. lamlvm only uses the stable subset (derive, display,
+# context selectors, ensure!, OptionExt), which is the same across 0.7 to 0.9.
+# 0.9 because Debian sid carries only snafu 0.9, so 0.7 kept lamlvm out of the
+# archive.
+snafu = { version = "0.9", default-features = false }
 
 # tracing for diagnostic emission (no_std-compatible with default-features = false).
 tracing = { version = "0.1", default-features = false }
@@ -71,6 +71,12 @@ tracing-subscriber = "0.3"
 # Bridges std::io::{Read,Seek} into embedded_io::{Read,Seek} for the
 # tests that read from real files / Cursors.
 embedded-io-adapters = { version = "0.6", features = ["std"] }
+# The fixture images are committed zstd-compressed; their LV contents are
+# checked against the SHA-256 device-mapper gave. ruzstd 0.9.1 carries the
+# RUSTSEC-2026-0344 fix and needs Rust 1.87, so the tests (not the library)
+# need 1.87.
+ruzstd = "0.9.1"
+sha2 = "0.11"
 
 [package.metadata.docs.rs]
 # Build docs against the `std` feature (the meaningful public surface).

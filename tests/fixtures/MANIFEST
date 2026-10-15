@@ -1,0 +1,7 @@
+wrapped_metadata|root|8388608|9c73651894008ba40a7ddcbaf07977e24c98632752d8967ebbe7e3811ee410f6
+# wrapped_metadata committed text at 2092544+1070 in a 2093056-byte area: wraps after 512 bytes
+no_timestamp|stamped|4194304|439079fe42b14594141527379bef7d7613c5627990f4a7f0925f9e4b0504d2bf
+no_timestamp|unstamped|4194304|620d0ca12a6f2c120a43f0017d7c68935d7f5ba188b1b0a066095f3201bf00e8
+# no_timestamp LV unstamped has no creation_time or creation_host in the on-disk metadata
+striped_and_thin|root|6291456|84814be2299dfdbd6ac8492bf06b375cc0692b952987077a055429a9868a31d7
+# striped_and_thin LVs striped (2 stripes), pool (thin-pool) and thin (thin) must fail to open on their own
